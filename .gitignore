@@ -1,0 +1,7 @@
+config.json
+fathom_transcripts/
+fathom_markdown_v2/
+fathom_md/
+fathom_md_v2/
+__pycache__/
+*.pyc
