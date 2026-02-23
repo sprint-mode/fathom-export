@@ -4,33 +4,36 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What this project does
 
-Three standalone Python scripts for exporting Fathom meeting transcripts:
+Three Python scripts for exporting Fathom meeting transcripts to Markdown and syncing them to Google Drive:
 
-1. **`export_fathom_transcripts.py`** — Downloads *all* meetings and their transcripts from the Fathom API (`https://api.fathom.ai/external/v1`) and saves each as a JSON file under `fathom_transcripts/`. Handles pagination (cursor-based) and rate-limiting (429 with exponential backoff).
+1. **`export_fathom_transcripts_since.py`** — Downloads meetings and transcripts from the Fathom API (`https://api.fathom.ai/external/v1`) since a given date and exports each directly to a Markdown file in `transcripts/`. Handles pagination (cursor-based) and rate-limiting (429 with exponential backoff).
 
-2. **`convert_fathom_to_md.py`** — Reads the JSON files in `fathom_transcripts/` and converts each to a Markdown file in `fathom_markdown_v2/`. No API calls; purely local conversion. Run after `export_fathom_transcripts.py`.
+2. **`upload_to_drive.py`** — Uploads Markdown files from `transcripts/` to a Google Drive folder. Skips files already present. Accepts `--since` to filter by date.
 
-3. **`export_fathom_transcripts_since.py`** — Combined download + Markdown export in one pass, filtered to meetings on/after a given date. Accepts CLI args.
+3. **`sync.py`** — Orchestrates a full sync: checks the latest transcript date in Drive, exports new meetings since that date, then uploads them.
 
 ## Running the scripts
 
 ```bash
-# Step 1: download all transcripts as JSON
-python export_fathom_transcripts.py
+# Full sync (recommended): export new transcripts and upload to Drive
+python sync.py
 
-# Step 2: convert downloaded JSONs to Markdown
-python convert_fathom_to_md.py
+# First run or backfill from a specific date
+python sync.py --since 2026-01-01
 
-# Or: download + export since a date (combined, no separate JSON step)
-python export_fathom_transcripts_since.py --since 2026-01-01 --outdir ./fathom_md
+# Export only (no Drive upload)
+python export_fathom_transcripts_since.py --since 2026-01-01
 
 # Dry run (list meetings without downloading)
 python export_fathom_transcripts_since.py --since 2026-01-01 --dry-run
+
+# Upload only
+python upload_to_drive.py --since 2026-01-01
 ```
 
-All timestamps are UTC. Dependencies: `requests` (stdlib only otherwise, Python 3.9+). Install with:
+All timestamps are UTC. Dependencies:
 ```bash
-pip install requests
+pip install requests google-api-python-client google-auth-httplib2 google-auth-oauthlib
 ```
 
 ## API key / config
