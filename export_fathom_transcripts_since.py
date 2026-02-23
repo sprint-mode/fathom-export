@@ -15,8 +15,7 @@ Notes:
   - Adjust auth header in `auth_headers()`
 
 Usage:
-  export FATHOM_API_KEY="..."
-  python fathom_export_since.py --since 2026-02-01 --outdir ./fathom_md --tz America/Argentina/Buenos_Aires
+  python export_fathom_transcripts_since.py --since 2026-02-01 --outdir ./fathom_md
 
 If you already know the exact endpoints, you’ll only need to edit the constants near the top.
 """
@@ -31,10 +30,9 @@ import re
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional
 
 import requests
-from zoneinfo import ZoneInfo
 
 _config = json.loads(Path("config.json").read_text(encoding="utf-8"))
 
@@ -163,14 +161,12 @@ def iso_to_dt(value: str) -> dt.datetime:
     return dt.datetime.fromisoformat(v)
 
 
-def format_dt_for_filename(d: dt.datetime, tz: ZoneInfo) -> Tuple[str, str]:
-    local = d.astimezone(tz)
-    return local.strftime("%Y-%m-%d"), local.strftime("%H%M")
+def format_dt_for_filename(d: dt.datetime):
+    return d.strftime("%Y-%m-%d"), d.strftime("%H%M")
 
 
-def format_dt_for_md(d: dt.datetime, tz: ZoneInfo) -> str:
-    local = d.astimezone(tz)
-    return local.strftime("%Y-%m-%d %H:%M:%S %Z")
+def format_dt_for_md(d: dt.datetime) -> str:
+    return d.strftime("%Y-%m-%d %H:%M:%S UTC")
 
 
 def pick_invitees_for_filename(invitees: List[str]) -> str:
@@ -204,7 +200,7 @@ class Meeting:
     raw: Dict[str, Any]
 
 
-def extract_meeting_fields(item: Dict[str, Any], tz: ZoneInfo) -> Meeting:
+def extract_meeting_fields(item: Dict[str, Any]) -> Meeting:
     """
     Map your API response into our Meeting dataclass.
 
@@ -322,8 +318,8 @@ def get_meeting_transcript(meeting_id: str) -> Dict[str, Any]:
 # EXPORT
 # =========================
 
-def build_filename(meeting: Meeting, tz: ZoneInfo) -> str:
-    date_part, time_part = format_dt_for_filename(meeting.start_time, tz)
+def build_filename(meeting: Meeting) -> str:
+    date_part, time_part = format_dt_for_filename(meeting.start_time)
     title = sanitize_filename_part(meeting.title)
     invitees = pick_invitees_for_filename(meeting.invitees)
 
@@ -333,15 +329,15 @@ def build_filename(meeting: Meeting, tz: ZoneInfo) -> str:
     return base + ".md"
 
 
-def render_markdown(meeting: Meeting, transcript_payload: Dict[str, Any], tz: ZoneInfo) -> str:
+def render_markdown(meeting: Meeting, transcript_payload: Dict[str, Any]) -> str:
     """
     Creates an .md file that includes:
       - A metadata header (YAML-like)
       - A transcript section (best-effort mapping)
     TODO: adjust transcript extraction to your API response structure.
     """
-    created_str = format_dt_for_md(meeting.created_at, tz) if meeting.created_at else ""
-    start_str = format_dt_for_md(meeting.start_time, tz)
+    created_str = format_dt_for_md(meeting.created_at) if meeting.created_at else ""
+    start_str = format_dt_for_md(meeting.start_time)
 
     # Transcript extraction
     transcript_text = ""
@@ -416,11 +412,9 @@ def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--since", required=True, help="Start date (YYYY-MM-DD), inclusive")
     parser.add_argument("--outdir", default="./fathom_md_v2", help="Output folder")
-    parser.add_argument("--tz", default="UTC", help="IANA timezone, e.g. America/Argentina/Buenos_Aires")
     parser.add_argument("--dry-run", action="store_true", help="Do not download/export, just list meetings")
     args = parser.parse_args()
 
-    
     since_date = dt.date.fromisoformat(args.since)
     outdir = Path(args.outdir)
     outdir.mkdir(parents=True, exist_ok=True)
@@ -430,24 +424,19 @@ def main() -> None:
     meetings: List[Meeting] = []
     for item in items:
         try:
-            meetings.append(extract_meeting_fields(item, tz))
+            meetings.append(extract_meeting_fields(item))
         except Exception as e:
             print(f"Skipping item (cannot parse): {e}")
             continue
 
-    # Filter by since_date against meeting.start_time in local time
-    def local_date(m: Meeting) -> dt.date:
-        return m.start_time.astimezone(tz).date()
-
-    meetings = [m for m in meetings if local_date(m) >= since_date]
+    meetings = [m for m in meetings if m.start_time.date() >= since_date]
     meetings.sort(key=lambda m: m.start_time)
 
-    print(f"Found {len(meetings)} meetings since {since_date.isoformat()} ({args.tz}).")
+    print(f"Found {len(meetings)} meetings since {since_date.isoformat()} (UTC).")
 
     if args.dry_run:
         for m in meetings:
-            d = format_dt_for_md(m.start_time, tz)
-            print(f"- {d} | {m.id} | {m.title}")
+            print(f"- {format_dt_for_md(m.start_time)} | {m.id} | {m.title}")
         return
 
     for m in meetings:
@@ -458,7 +447,7 @@ def main() -> None:
             merged = dict(m.raw)
             if isinstance(detail, dict):
                 merged.update(detail)
-            m = extract_meeting_fields(merged, tz)
+            m = extract_meeting_fields(merged)
         except Exception as e:
             # Non-fatal
             print(f"[{m.id}] Warning: could not fetch detail, using list payload. Error: {e}")
@@ -469,10 +458,10 @@ def main() -> None:
             print(f"[{m.id}] Error: could not fetch transcript: {e}")
             transcript = {}
 
-        filename = build_filename(m, tz)
+        filename = build_filename(m)
         path = ensure_unique_path(outdir / filename)
 
-        md = render_markdown(m, transcript, tz)
+        md = render_markdown(m, transcript)
         path.write_text(md, encoding="utf-8")
 
         print(f"[{m.id}] Saved: {path}")
