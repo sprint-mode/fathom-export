@@ -1,3 +1,4 @@
 {
-  "fathom_api_key": "YOUR_FATHOM_API_KEY_HERE"
+  "fathom_api_key": "YOUR_FATHOM_API_KEY_HERE",
+  "google_drive_folder_id": "YOUR_DRIVE_FOLDER_ID_HERE"
 }

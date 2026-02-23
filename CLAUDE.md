@@ -22,13 +22,13 @@ python export_fathom_transcripts.py
 python convert_fathom_to_md.py
 
 # Or: download + export since a date (combined, no separate JSON step)
-python export_fathom_transcripts_since.py --since 2026-01-01 --outdir ./fathom_md --tz America/Argentina/Buenos_Aires
+python export_fathom_transcripts_since.py --since 2026-01-01 --outdir ./fathom_md
 
 # Dry run (list meetings without downloading)
 python export_fathom_transcripts_since.py --since 2026-01-01 --dry-run
 ```
 
-Dependencies: `requests`, `zoneinfo` (stdlib Python 3.9+). Install with:
+All timestamps are UTC. Dependencies: `requests` (stdlib only otherwise, Python 3.9+). Install with:
 ```bash
 pip install requests
 ```

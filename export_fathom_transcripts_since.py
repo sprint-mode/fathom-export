@@ -17,7 +17,7 @@ Notes:
 Usage:
   python export_fathom_transcripts_since.py --since 2026-02-01 --outdir ./fathom_md
 
-If you already know the exact endpoints, you’ll only need to edit the constants near the top.
+If you already know the exact endpoints, you'll only need to edit the constants near the top.
 """
 
 from __future__ import annotations
@@ -52,8 +52,7 @@ FATHOM_BASE_URL = "https://api.fathom.ai/external"
 # - GET_MEETING_PATH should return full meeting metadata
 # - GET_TRANSCRIPT_PATH should return transcript text + optionally speakers/timestamps
 LIST_MEETINGS_PATH = "/v1/meetings"
-GET_MEETING_PATH = "/v1/meetings/{meeting_id}"
-GET_TRANSCRIPT_PATH = "/v1/meetings/{meeting_id}/transcript"
+GET_TRANSCRIPT_PATH = "/v1/recordings/{meeting_id}/transcript"
 
 # TODO: adjust if your API uses a different auth header.
 # Common patterns:
@@ -213,7 +212,7 @@ def extract_meeting_fields(item: Dict[str, Any]) -> Meeting:
       - created_at
       - attendees / invitees / participants
     """
-    meeting_id = str(item.get("id") or item.get("meeting_id") or "")
+    meeting_id = str(item.get("id") or item.get("meeting_id") or item.get("recording_id") or "")
     if not meeting_id:
         raise ValueError(f"Meeting missing id field: {item.keys()}")
 
@@ -222,7 +221,8 @@ def extract_meeting_fields(item: Dict[str, Any]) -> Meeting:
     url = item.get("url") or item.get("share_url") or item.get("meeting_url")
 
     # Prefer start_time; fallback to created_at
-    start_raw = item.get("start_time") or item.get("started_at") or item.get("meeting_start")
+    start_raw = (item.get("start_time") or item.get("started_at") or item.get("meeting_start")
+                 or item.get("recording_start_time") or item.get("scheduled_start_time"))
     created_raw = item.get("created_at") or item.get("createdAt")
 
     if start_raw:
@@ -235,7 +235,7 @@ def extract_meeting_fields(item: Dict[str, Any]) -> Meeting:
     created_dt = iso_to_dt(str(created_raw)) if created_raw else None
 
     invitees: List[str] = []
-    attendees = item.get("invitees") or item.get("attendees") or item.get("participants") or []
+    attendees = item.get("calendar_invitees") or item.get("invitees") or item.get("attendees") or item.get("participants") or []
     if isinstance(attendees, list):
         for a in attendees:
             if isinstance(a, str):
@@ -304,11 +304,6 @@ def list_meetings_since(since_date: dt.date) -> List[Dict[str, Any]]:
     return results
 
 
-def get_meeting_detail(meeting_id: str) -> Dict[str, Any]:
-    url = f"{FATHOM_BASE_URL}{GET_MEETING_PATH.format(meeting_id=meeting_id)}"
-    return request_json("GET", url)
-
-
 def get_meeting_transcript(meeting_id: str) -> Dict[str, Any]:
     url = f"{FATHOM_BASE_URL}{GET_TRANSCRIPT_PATH.format(meeting_id=meeting_id)}"
     return request_json("GET", url)
@@ -343,33 +338,44 @@ def render_markdown(meeting: Meeting, transcript_payload: Dict[str, Any]) -> str
     transcript_text = ""
     speakers_block = ""
 
-    # Common shapes:
-    # - { "transcript": "..." }
-    # - { "text": "..." }
-    # - { "segments": [ { "speaker": "...", "text": "...", "start": ... }, ... ] }
+    def fmt_ts(seconds):
+        try:
+            seconds = float(seconds)
+        except (TypeError, ValueError):
+            return ""
+        m, s = divmod(int(seconds), 60)
+        h, m = divmod(m, 60)
+        return f"{h:02d}:{m:02d}:{s:02d}" if h else f"{m:02d}:{s:02d}"
+
+    def render_blocks(blocks):
+        lines = []
+        for block in blocks:
+            if not isinstance(block, dict):
+                continue
+            txt = (block.get("text") or "").strip()
+            if not txt:
+                continue
+            sp = block.get("speaker")
+            spk = (sp.get("display_name") or sp.get("name") or sp.get("email") or "Unknown") if isinstance(sp, dict) else "Unknown"
+            ts = fmt_ts(block.get("start_seconds") or block.get("start_time_seconds") or block.get("start"))
+            lines.append(f"- **[{ts}] {spk}:** {txt}" if ts else f"- **{spk}:** {txt}")
+        return "\n".join(lines)
+
     if isinstance(transcript_payload, dict):
-        transcript_text = (
-            transcript_payload.get("transcript")
-            or transcript_payload.get("text")
-            or transcript_payload.get("content")
-            or ""
-        )
+        raw_transcript = transcript_payload.get("transcript")
 
-        segments = transcript_payload.get("segments") or transcript_payload.get("utterances") or []
-        if segments and isinstance(segments, list):
-            lines = []
-            for seg in segments:
-                if not isinstance(seg, dict):
-                    continue
-                spk = seg.get("speaker") or seg.get("speaker_name") or seg.get("name") or "Speaker"
-                txt = seg.get("text") or seg.get("utterance") or ""
-                if not txt:
-                    continue
-                lines.append(f"**{spk}:** {txt}")
-            if lines:
-                speakers_block = "\n".join(lines)
+        if isinstance(raw_transcript, list):
+            speakers_block = render_blocks(raw_transcript)
+        elif isinstance(raw_transcript, str):
+            transcript_text = raw_transcript
+        else:
+            transcript_text = (transcript_payload.get("text") or transcript_payload.get("content") or "")
 
-    # If we have both, prefer speakers_block as “transcript”
+        if not speakers_block:
+            segments = transcript_payload.get("segments") or transcript_payload.get("utterances") or []
+            if isinstance(segments, list):
+                speakers_block = render_blocks(segments)
+
     transcript_section = speakers_block if speakers_block else transcript_text
 
     header = [
@@ -411,7 +417,7 @@ def render_markdown(meeting: Meeting, transcript_payload: Dict[str, Any]) -> str
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--since", required=True, help="Start date (YYYY-MM-DD), inclusive")
-    parser.add_argument("--outdir", default="./fathom_md_v2", help="Output folder")
+    parser.add_argument("--outdir", default="./transcripts", help="Output folder")
     parser.add_argument("--dry-run", action="store_true", help="Do not download/export, just list meetings")
     args = parser.parse_args()
 
@@ -440,17 +446,11 @@ def main() -> None:
         return
 
     for m in meetings:
-        # Optionally pull more detail (can improve invitees/title/url consistency)
-        try:
-            detail = get_meeting_detail(m.id)
-            # Merge detail over the list item if desired
-            merged = dict(m.raw)
-            if isinstance(detail, dict):
-                merged.update(detail)
-            m = extract_meeting_fields(merged)
-        except Exception as e:
-            # Non-fatal
-            print(f"[{m.id}] Warning: could not fetch detail, using list payload. Error: {e}")
+        filename = build_filename(m)
+        path = outdir / filename
+        if path.exists():
+            print(f"[{m.id}] SKIP (already exists): {filename}")
+            continue
 
         try:
             transcript = get_meeting_transcript(m.id)
@@ -458,8 +458,7 @@ def main() -> None:
             print(f"[{m.id}] Error: could not fetch transcript: {e}")
             transcript = {}
 
-        filename = build_filename(m)
-        path = ensure_unique_path(outdir / filename)
+        path = ensure_unique_path(path)
 
         md = render_markdown(m, transcript)
         path.write_text(md, encoding="utf-8")

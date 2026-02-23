@@ -1,7 +1,10 @@
 config.json
+credentials.json
+token.json
 fathom_transcripts/
 fathom_markdown_v2/
 fathom_md/
 fathom_md_v2/
+transcripts/
 __pycache__/
 *.pyc
