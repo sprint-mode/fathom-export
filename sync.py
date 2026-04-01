@@ -16,6 +16,7 @@ import json
 import re
 import subprocess
 import sys
+from datetime import datetime, timedelta
 from pathlib import Path
 
 from google.auth.transport.requests import Request
@@ -69,7 +70,9 @@ def latest_date_in_drive(service, folder_id) -> str | None:
             break
 
     dates = [m.group(1) for name in names if (m := DATE_RE.match(name))]
-    return max(dates) if dates else None
+    latest = max(dates)
+    one_day_back = (datetime.strptime(latest, "%Y-%m-%d") - timedelta(days=1)).strftime("%Y-%m-%d")
+    return one_day_back
 
 
 def run(cmd):

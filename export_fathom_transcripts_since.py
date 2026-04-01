@@ -34,7 +34,7 @@ from typing import Any, Dict, List, Optional
 
 import requests
 
-_config = json.loads(Path("config.json").read_text(encoding="utf-8"))
+_config = json.loads((Path(__file__).parent / "config.json").read_text(encoding="utf-8"))
 
 
 # =========================
@@ -313,10 +313,46 @@ def get_meeting_transcript(meeting_id: str) -> Dict[str, Any]:
 # EXPORT
 # =========================
 
-def build_filename(meeting: Meeting) -> str:
+def extract_speakers_from_transcript(transcript_payload: Dict[str, Any]) -> List[str]:
+    """Return unique speaker names found in the transcript blocks."""
+    speakers: List[str] = []
+
+    def collect_from_blocks(blocks):
+        for block in blocks:
+            if not isinstance(block, dict):
+                continue
+            sp = block.get("speaker")
+            if isinstance(sp, dict):
+                name = sp.get("display_name") or sp.get("name") or sp.get("email") or ""
+                name = name.strip()
+                if name and name not in speakers:
+                    speakers.append(name)
+
+    if not isinstance(transcript_payload, dict):
+        return speakers
+
+    raw_transcript = transcript_payload.get("transcript")
+    if isinstance(raw_transcript, list):
+        collect_from_blocks(raw_transcript)
+
+    segments = transcript_payload.get("segments") or transcript_payload.get("utterances") or []
+    if isinstance(segments, list):
+        collect_from_blocks(segments)
+
+    return speakers
+
+
+def build_filename(meeting: Meeting, transcript_speakers: Optional[List[str]] = None) -> str:
     date_part, time_part = format_dt_for_filename(meeting.start_time)
     title = sanitize_filename_part(meeting.title)
-    invitees = pick_invitees_for_filename(meeting.invitees)
+
+    # Merge calendar invitees + transcript speakers, preserving order, no duplicates
+    combined: List[str] = list(meeting.invitees)
+    for sp in (transcript_speakers or []):
+        if sp not in combined:
+            combined.append(sp)
+
+    invitees = pick_invitees_for_filename(combined)
 
     # Compose and truncate
     base = f"{date_part} {time_part} - {title} - {invitees}"
@@ -446,17 +482,18 @@ def main() -> None:
         return
 
     for m in meetings:
-        filename = build_filename(m)
-        path = outdir / filename
-        if path.exists():
-            print(f"[{m.id}] SKIP (already exists): {filename}")
-            continue
-
         try:
             transcript = get_meeting_transcript(m.id)
         except Exception as e:
             print(f"[{m.id}] Error: could not fetch transcript: {e}")
             transcript = {}
+
+        speakers = extract_speakers_from_transcript(transcript)
+        filename = build_filename(m, speakers)
+        path = outdir / filename
+        if path.exists():
+            print(f"[{m.id}] SKIP (already exists): {filename}")
+            continue
 
         path = ensure_unique_path(path)
 

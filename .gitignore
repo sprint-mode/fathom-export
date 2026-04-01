@@ -2,5 +2,7 @@ config.json
 credentials.json
 token.json
 transcripts/
+run_sync.bat
+sync.log
 __pycache__/
 *.pyc
